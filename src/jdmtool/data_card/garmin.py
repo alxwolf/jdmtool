@@ -20,11 +20,12 @@ class GarminFirmwareWriter(BasicUsbDevice):
     READ_ENDPOINT = -1
 
     def write_firmware_stage1(self) -> None:
-        with open(FIRMWARE_DIR / 'grmn0500.dat', 'rb') as fd:
+        with open(FIRMWARE_DIR / 'grmn0300.dat', 'rb') as fd:
             self.write_firmware(fd)
 
     def init_stage2(self) -> None:
         version = self.control_read(0xC0, 0x8A, 0x0000, 0x0000, 512)
+        print(f"Version is {version}")
         if version != b'Aviation Card Programmer Ver 3.02 Aug 10 2015 13:21:51\x00':
             raise AlreadyUpdatedException()
 
