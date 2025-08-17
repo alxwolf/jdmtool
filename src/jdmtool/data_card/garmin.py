@@ -6,12 +6,25 @@ from struct import unpack
 from typing import BinaryIO
 
 from usb1 import USBDeviceHandle, USBError
-from usb1.libusb1 import LIBUSB_ERROR_NO_DEVICE, LIBUSB_ERROR_IO # pyright: ignore[reportAttributeAccessIssue]
+from usb1.libusb1 import (
+    LIBUSB_ERROR_NO_DEVICE,  # pyright: ignore[reportAttributeAccessIssue]
+    LIBUSB_ERROR_IO,  # pyright: ignore[reportAttributeAccessIssue]
+)
 
-from .common import IID_MAP, BasicUsbDevice, DataCardType, ProgrammingDevice, ProgrammingException
+from .common import (
+    IID_MAP,
+    BasicUsbDevice,
+    DataCardType,
+    ProgrammingDevice,
+    ProgrammingException,
+)
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-FIRMWARE_DIR = Path(__file__).parent / 'firmware'
+FIRMWARE_DIR = Path(__file__).parent / "firmware"
 
 
 class AlreadyUpdatedException(ProgrammingException):
@@ -21,30 +34,30 @@ class AlreadyUpdatedException(ProgrammingException):
 class GarminFirmwareWriter(BasicUsbDevice):
 
     def __init__(self, handle: USBDeviceHandle) -> None:
-         # Initialize base device
-        super().__init__(handle, -1, -1) # force control_writes
+        # Initialize base device
+        super().__init__(handle, -1, -1)  # force control_writes
 
     def write_firmware_0x300(self) -> None:
-        print("Writing firmware for VID 0x300")
-        with open(FIRMWARE_DIR / 'grmn0300.dat', 'rb') as fd:
+        logger.info("Writing firmware for VID 0x300")
+        with open(FIRMWARE_DIR / "grmn0300.dat", "rb") as fd:
             self.write_firmware(fd)
 
     def write_firmware_stage1(self) -> None:
-        print("Writing FW 3.02 for current model")
-        with open(FIRMWARE_DIR / 'grmn0500.dat', 'rb') as fd:
+        logger.info("Writing FW 3.02 for current model")
+        with open(FIRMWARE_DIR / "grmn0500.dat", "rb") as fd:
             self.write_firmware(fd)
 
     def init_stage2(self) -> None:
         version = self.control_read(0xC0, 0x8A, 0x0000, 0x0000, 512)
-        print("Check if upgrade to FW 3.05 is possible...")
+        logger.info("Check if upgrade to FW 3.05 is possible...")
         # this will skip the "early" card programmer as its FW has different build time
-        if version != b'Aviation Card Programmer Ver 3.02 Aug 10 2015 13:21:51\x00':
-            print("No, we're good.")
+        if version != b"Aviation Card Programmer Ver 3.02 Aug 10 2015 13:21:51\x00":
+            logger.info("No, we're good.")
             raise AlreadyUpdatedException()
 
     def write_firmware_stage2(self) -> None:
-        print("Writing FW 3.05 for current model")
-        with open(FIRMWARE_DIR / 'grmn1300.dat', 'rb') as fd:
+        logger.info("Writing FW 3.05 for current model")
+        with open(FIRMWARE_DIR / "grmn1300.dat", "rb") as fd:
             self.write_firmware(fd)
 
     def write_firmware(self, fd: BinaryIO) -> None:
@@ -57,17 +70,14 @@ class GarminFirmwareWriter(BasicUsbDevice):
 
         # Show progress bar while writing
         with tqdm(
-            desc="Writing firmware",
-            total=total_size,
-            unit='B',
-            unit_scale=True
+            desc="Writing firmware", total=total_size, unit="B", unit_scale=True
         ) as pbar:
             while True:
                 buf = fd.read(4)
                 if not buf:
                     break
 
-                addr, data_len = unpack('<HH', buf)
+                addr, data_len = unpack("<HH", buf)
                 data = fd.read(data_len)
                 attempts = 0
                 while True:
@@ -88,25 +98,30 @@ class GarminFirmwareWriter(BasicUsbDevice):
 
                 # Update progress bar by chunk size
                 pbar.update(4 + data_len)
-                    
+
+
 class GarminProgrammingDevice(ProgrammingDevice):
 
-    NO_CARD_IDS = { # card reader / firmware versions
-        0x00697641, # "newer" 010-10579-20 
-        0x00090304  # "older" 011-01277-00
-        }
+    NO_CARD_IDS = {  # card reader / firmware versions
+        0x00697641,  # "newer" 010-10579-20
+        0x00090304,  # "older" 011-01277-00
+    }
 
-    def __init__(self, handle: USBDeviceHandle, read_endpoint: int, write_endpoint: int) -> None:
-         # Initialize base device
+    def __init__(
+        self, handle: USBDeviceHandle, read_endpoint: int, write_endpoint: int
+    ) -> None:
+        # Initialize base device
         super().__init__(handle, read_endpoint, write_endpoint)
         self.firmware = ""
 
     def init(self) -> None:
         buf = self.control_read(0xC0, 0x8A, 0x0000, 0x0000, 512)
-        self.firmware = buf.rstrip(b'\x00').decode()
+        self.firmware = buf.rstrip(b"\x00").decode()
 
     def get_card_id(self) -> int:
-        return int.from_bytes(self.control_read(0xC0, 0x82, 0x0000, 0x0000, 4), 'little')
+        return int.from_bytes(
+            self.control_read(0xC0, 0x82, 0x0000, 0x0000, 4), "little"
+        )
 
     def get_chip_iids(self) -> list[int]:
         return [self.get_card_id()]
@@ -116,13 +131,15 @@ class GarminProgrammingDevice(ProgrammingDevice):
         if card_id in self.NO_CARD_IDS:
             raise ProgrammingException("Card is missing!")
 
-        self.chips = (card_id & 0x00ff0000) >> 16
-        manufacturer_id = card_id & 0xff
-        chip_id = (card_id & 0x0000ff00) >> 8
+        self.chips = (card_id & 0x00FF0000) >> 16
+        manufacturer_id = card_id & 0xFF
+        chip_id = (card_id & 0x0000FF00) >> 8
 
         info = IID_MAP.get((manufacturer_id, chip_id))
         if info is None:
-            raise ProgrammingException(f"Unknown data card ID: 0x{card_id:08x}. Please file a bug!")
+            raise ProgrammingException(
+                f"Unknown data card ID: 0x{card_id:08x}. Please file a bug!"
+            )
 
         (self.card_type, self.sectors_per_chip, self.card_info) = info
 
@@ -149,14 +166,18 @@ class GarminProgrammingDevice(ProgrammingDevice):
             unknown1 = 0
             unknown2 = 1
 
-        unknown1_bytes = unknown1.to_bytes(2, 'big')
-        start_sector_byte = start_sector.to_bytes(2, 'big')
-        sector_count_byte = sector_count.to_bytes(2, 'big')
-        unknown2_bytes = unknown2.to_bytes(2, 'big')
+        unknown1_bytes = unknown1.to_bytes(2, "big")
+        start_sector_byte = start_sector.to_bytes(2, "big")
+        sector_count_byte = sector_count.to_bytes(2, "big")
+        unknown2_bytes = unknown2.to_bytes(2, "big")
 
         buf = (
-            unknown1_bytes + start_sector_byte + b"\x00\x00\x00\x00" +
-            sector_count_byte + unknown2_bytes + b"\x00\x00"
+            unknown1_bytes
+            + start_sector_byte
+            + b"\x00\x00\x00\x00"
+            + sector_count_byte
+            + unknown2_bytes
+            + b"\x00\x00"
         )
         self.control_write(0x40, 0x85, 0x0000, 0x0000, buf)
 
@@ -171,13 +192,19 @@ class GarminProgrammingDevice(ProgrammingDevice):
             unknown1 = 4
             unknown2 = 0
 
-        unknown1_bytes = unknown1.to_bytes(2, 'big')
-        start_sector_byte = start_sector.to_bytes(2, 'big')
+        unknown1_bytes = unknown1.to_bytes(2, "big")
+        start_sector_byte = start_sector.to_bytes(2, "big")
         # Not clear if this is actually an offset, or what is supported.
         sector_offset_bytes = (0).to_bytes(2, "big")
-        unknown2_bytes = unknown2.to_bytes(2, 'big')
+        unknown2_bytes = unknown2.to_bytes(2, "big")
 
-        buf = unknown1_bytes + start_sector_byte + sector_offset_bytes + b"\x00\x00" + unknown2_bytes
+        buf = (
+            unknown1_bytes
+            + start_sector_byte
+            + sector_offset_bytes
+            + b"\x00\x00"
+            + unknown2_bytes
+        )
         self.control_write(0x40, 0x86, 0x0000, 0x0000, buf)
 
     def end_write(self) -> None:
@@ -188,9 +215,9 @@ class GarminProgrammingDevice(ProgrammingDevice):
 
         # Doesn't seem to make a difference, but this is what Garmin's software does.
         unknown = 0 if self.card_type == DataCardType.TAWS else 4
-        unknown_bytes = unknown.to_bytes(2, 'big')
+        unknown_bytes = unknown.to_bytes(2, "big")
 
-        start_sector_bytes = start_sector.to_bytes(2, 'big')
+        start_sector_bytes = start_sector.to_bytes(2, "big")
 
         # We can technically read from the middle of a sector.
         # For NavData cards, it's the offset in bytes, 0x0 through 0xffff.
@@ -199,40 +226,48 @@ class GarminProgrammingDevice(ProgrammingDevice):
         # We're not going to bother with this craziness, and will only support 0.
         sector_offset_bytes = (0).to_bytes(2, "big")
 
-        buf = unknown_bytes + start_sector_bytes + sector_offset_bytes + b"\x00\x00\x00\x00"
+        buf = (
+            unknown_bytes
+            + start_sector_bytes
+            + sector_offset_bytes
+            + b"\x00\x00\x00\x00"
+        )
         self.control_write(0x40, 0x81, 0x0000, 0x0000, buf)
 
     def end_read(self) -> None:
         self.control_write(0x40, 0x83, 0x0000, 0x0000, b"")
 
-    def read_blocks(self, start_sector: int, length: int) -> Generator[bytes, None, None]:
+    def read_blocks(
+        self, start_sector: int, length: int
+    ) -> Generator[bytes, None, None]:
         block_size = self.card_type.read_size
 
         self.begin_read(start_sector)
         try:
             while length > 0:
                 block = self.bulk_read(block_size)
-                yield block[:min(block_size, length)]
+                yield block[: min(block_size, length)]
                 length -= block_size
         finally:
             self.end_read()
 
-    def erase_sectors(self, start_sector: int, num_sectors: int) -> Generator[None, None, None]:
+    def erase_sectors(
+        self, start_sector: int, num_sectors: int
+    ) -> Generator[None, None, None]:
         self.begin_erase(start_sector, num_sectors)
         try:
             for idx in range(num_sectors):
                 buf = self.bulk_read(0x000C)
-                if buf[:-2] != b"\x42\x6C\x4B\x65\x00\x00\x00\x00\x00\x00":
+                if buf[:-2] != b"\x42\x6c\x4b\x65\x00\x00\x00\x00\x00\x00":
                     raise ProgrammingException(f"Unexpected response: {buf}")
-                if int.from_bytes(buf[-2:], 'big') != idx:
+                if int.from_bytes(buf[-2:], "big") != idx:
                     raise ProgrammingException(f"Unexpected response: {buf}")
                 yield
         finally:
             self.end_write()
 
     def write_blocks(
-        self, start_sector: int, length: int,
-        read_func: Callable[[int], bytes]
+        self, start_sector: int, length: int, read_func: Callable[[int], bytes]
     ) -> Generator[bytes, None, None]:
         block_size = self.card_type.max_write_size
 
